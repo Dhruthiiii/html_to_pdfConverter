@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+HTML to PDF Converter
+
+This script converts HTML files to PDF format using xhtml2pdf library.
+Supports both file paths and HTML strings as input.
+"""
+
+import os
+import sys
+import glob
+from pathlib import Path
+from xhtml2pdf import pisa
+from io import BytesIO
+
+
+class HTMLToPDFConverter:
+    """A class to handle HTML to PDF conversion."""
+    
+    def __init__(self):
+        """Initialize the converter."""
+        pass
+    
+    def convert_file_to_pdf(self, html_file_path, output_pdf_path=None, css_file_path=None):
+        """
+        Convert an HTML file to PDF.
+        
+        Args:
+            html_file_path (str): Path to the HTML file
+            output_pdf_path (str, optional): Path for output PDF. If None, uses HTML filename with .pdf extension
+            css_file_path (str, optional): Path to CSS file for styling
+            
+        Returns:
+            str: Path to the generated PDF file
+            
+        Raises:
+            FileNotFoundError: If HTML file doesn't exist
+            Exception: For other conversion errors
+        """
+        html_path = Path(html_file_path)
+        
+        if not html_path.exists():
+            raise FileNotFoundError(f"HTML file not found: {html_file_path}")
+        
+        # Generate output path if not provided
+        if output_pdf_path is None:
+            output_pdf_path = html_path.with_suffix('.pdf')
+        
+        try:
+            # Read HTML content
+            with open(html_path, 'r', encoding='utf-8') as file:
+                html_content = file.read()
+            
+            # Add CSS if provided
+            if css_file_path and Path(css_file_path).exists():
+                with open(css_file_path, 'r', encoding='utf-8') as css_file:
+                    css_content = css_file.read()
+                    # Inject CSS into HTML
+                    html_content = html_content.replace('</head>', f'<style>{css_content}</style></head>')
+            
+            # Convert to PDF
+            with open(output_pdf_path, 'wb') as pdf_file:
+                pisa_status = pisa.CreatePDF(html_content, dest=pdf_file)
+            
+            if pisa_status.err:
+                raise Exception(f"PDF conversion failed with errors")
+            
+            print(f"✅ Successfully converted '{html_file_path}' to '{output_pdf_path}'")
+            return str(output_pdf_path)
+            
+        except Exception as e:
+            raise Exception(f"Error converting HTML to PDF: {str(e)}")
+    
+    def convert_string_to_pdf(self, html_string, output_pdf_path, css_string=None):
+        """
+        Convert an HTML string to PDF.
+        
+        Args:
+            html_string (str): HTML content as string
+            output_pdf_path (str): Path for output PDF file
+            css_string (str, optional): CSS content as string
+            
+        Returns:
+            str: Path to the generated PDF file
+            
+        Raises:
+            Exception: For conversion errors
+        """
+        try:
+            # Add CSS if provided
+            if css_string:
+                html_string = html_string.replace('</head>', f'<style>{css_string}</style></head>')
+            
+            # Convert to PDF
+            with open(output_pdf_path, 'wb') as pdf_file:
+                pisa_status = pisa.CreatePDF(html_string, dest=pdf_file)
+            
+            if pisa_status.err:
+                raise Exception(f"PDF conversion failed with errors")
+            
+            print(f"✅ Successfully converted HTML string to '{output_pdf_path}'")
+            return output_pdf_path
+            
+        except Exception as e:
+            raise Exception(f"Error converting HTML string to PDF: {str(e)}")
+    
+    def batch_convert_folder(self, input_folder, output_folder=None, recursive=True):
+        """
+        Convert all HTML files in a folder to PDF.
+        
+        Args:
+            input_folder (str): Path to folder containing HTML files
+            output_folder (str, optional): Output folder for PDFs. If None, uses same as input
+            recursive (bool): Whether to search subdirectories
+            
+        Returns:
+            list: List of successfully converted PDF file paths
+            
+        Raises:
+            FileNotFoundError: If input folder doesn't exist
+        """
+        input_path = Path(input_folder)
+        
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input folder not found: {input_folder}")
+        
+        if output_folder is None:
+            output_folder = input_folder
+        
+        output_path = Path(output_folder)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Find all HTML files
+        pattern = "**/*.html" if recursive else "*.html"
+        html_files = list(input_path.glob(pattern))
+        
+        if not html_files:
+            print(f"No HTML files found in {input_folder}")
+            return []
+        
+        converted_files = []
+        failed_files = []
+        
+        print(f"Found {len(html_files)} HTML files to convert...")
+        
+        for i, html_file in enumerate(html_files, 1):
+            try:
+                # Calculate relative path to preserve folder structure
+                relative_path = html_file.relative_to(input_path)
+                output_pdf_path = output_path / relative_path.with_suffix('.pdf')
+                
+                # Create output directory if it doesn't exist
+                output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                print(f"[{i}/{len(html_files)}] Converting: {html_file.name}")
+                
+                # Skip if PDF already exists and is newer than HTML
+                if output_pdf_path.exists():
+                    html_mtime = html_file.stat().st_mtime
+                    pdf_mtime = output_pdf_path.stat().st_mtime
+                    if pdf_mtime >= html_mtime:
+                        print(f"⏭️  Skipping (PDF already exists and is up to date): {output_pdf_path.name}")
+                        converted_files.append(str(output_pdf_path))
+                        continue
+                
+                # Read HTML content with error handling for encoding
+                try:
+                    with open(html_file, 'r', encoding='utf-8') as file:
+                        html_content = file.read()
+                except UnicodeDecodeError:
+                    # Try with different encoding if UTF-8 fails
+                    with open(html_file, 'r', encoding='latin-1') as file:
+                        html_content = file.read()
+                
+                # Convert to PDF
+                with open(output_pdf_path, 'wb') as pdf_file:
+                    pisa_status = pisa.CreatePDF(html_content, dest=pdf_file)
+                
+                if pisa_status.err:
+                    raise Exception(f"PDF conversion failed with errors")
+                
+                converted_files.append(str(output_pdf_path))
+                print(f"✅ Successfully converted to: {output_pdf_path}")
+                
+            except Exception as e:
+                failed_files.append((str(html_file), str(e)))
+                print(f"❌ Failed to convert {html_file.name}: {e}")
+        
+        # Summary
+        print(f"\n📊 Conversion Summary:")
+        print(f"✅ Successfully converted: {len(converted_files)} files")
+        print(f"❌ Failed conversions: {len(failed_files)} files")
+        
+        if failed_files:
+            print("\nFailed files:")
+            for file_path, error in failed_files:
+                print(f"  - {Path(file_path).name}: {error}")
+        
+        return converted_files
+
+
+def main():
+    """Main function to demonstrate usage."""
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  Single file: python html_to_pdfConverted.py <html_file> [output_pdf] [css_file]")
+        print("  Batch folder: python html_to_pdfConverted.py --batch <input_folder> [output_folder]")
+        print("  DAST Reports: python html_to_pdfConverted.py --dast")
+        print("\nExamples:")
+        print("  python html_to_pdfConverted.py example.html output.pdf styles.css")
+        print("  python html_to_pdfConverted.py --batch /path/to/html/files")
+        print("  python html_to_pdfConverted.py --dast")
+        return
+    
+    converter = HTMLToPDFConverter()
+    
+    try:
+        if sys.argv[1] == "--batch":
+            # Batch conversion mode
+            if len(sys.argv) < 3:
+                print("❌ Error: Input folder required for batch mode")
+                sys.exit(1)
+            
+            input_folder = sys.argv[2]
+            output_folder = sys.argv[3] if len(sys.argv) > 3 else None
+            
+            converted_files = converter.batch_convert_folder(input_folder, output_folder)
+            print(f"\n🎉 Batch conversion completed! {len(converted_files)} files converted.")
+            
+        elif sys.argv[1] == "--dast":
+            # DAST Reports specific conversion
+            dast_folder = "/Users/gundavarapu.s/Downloads/DAST Reports"
+            print(f"🔍 Converting DAST Reports from: {dast_folder}")
+            
+            converted_files = converter.batch_convert_folder(dast_folder)
+            print(f"\n🎉 DAST Reports conversion completed! {len(converted_files)} files converted.")
+            
+        else:
+            # Single file conversion mode
+            html_file = sys.argv[1]
+            output_pdf = sys.argv[2] if len(sys.argv) > 2 else None
+            css_file = sys.argv[3] if len(sys.argv) > 3 else None
+            
+            result_path = converter.convert_file_to_pdf(html_file, output_pdf, css_file)
+            print(f"PDF saved to: {result_path}")
+            
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# Example usage as a module:
+"""
+from html_to_pdfConverted import HTMLToPDFConverter
+
+# Initialize converter
+converter = HTMLToPDFConverter()
+
+# Convert HTML file to PDF
+converter.convert_file_to_pdf('input.html', 'output.pdf')
+
+# Convert HTML string to PDF
+html_content = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sample Document</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1 { color: #333; }
+        p { line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <h1>Hello World</h1>
+    <p>This is a sample HTML document converted to PDF.</p>
+</body>
+</html>
+'''
+
+converter.convert_string_to_pdf(html_content, 'sample_output.pdf')
+"""
